@@ -1,0 +1,23 @@
+services:
+  mineru-compat:
+    image: mineru-compat:1.0.0
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${COMPAT_PORT:-12001}:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      MINERU_API_URL: ${MINERU_API_URL:-http://host.docker.internal:12000}
+      MINERU_API_KEY: ${MINERU_API_KEY:-}
+      MINERU_TIER: ${MINERU_TIER:-standard}
+      PARSE_TIMEOUT: ${PARSE_TIMEOUT:-1800}
+      POLL_INTERVAL: ${POLL_INTERVAL:-1}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-209715200}
+      MAX_MARKDOWN_BYTES: ${MAX_MARKDOWN_BYTES:-16777216}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=6)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
