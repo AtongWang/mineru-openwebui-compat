@@ -1,61 +1,76 @@
 # MinerU Open WebUI Compat
 
-A lightweight CPU-only bridge between Open WebUI's legacy `/file_parse` loader and the self-hosted MinerU 4 V1 API. No GPU, model downloads, or changes to Open WebUI are required for the adapter itself.
+**English** | [简体中文](README.zh-CN.md)
 
-将 Open WebUI 的旧版同步接口转换为 MinerU 4 的上传、解析任务、轮询和 Markdown 下载流程。独立运行，不依赖 MinerU 源码仓库。**需已有可用的 MinerU 4 API 服务**；本仓库不启动或安装推理模型。
+**A `/file_parse` bridge for Open WebUI installations that do not yet support the MinerU 4 API.**
+
+Open WebUI v0.11.1's local MinerU integration still uploads documents to the legacy `POST /file_parse` endpoint and expects Markdown in a synchronous response. MinerU 4 removed that endpoint and introduced a V1 workflow: **upload → create a parse job → poll → download results**. The two interfaces are incompatible; changing the API URL alone does not resolve the mismatch.
+
+This project exists to bridge that gap. It exposes the `/file_parse` interface Open WebUI expects, calls an existing MinerU 4 V1 service, and returns the Markdown in the legacy `results.<filename>.md_content` response format.
 
 ```text
-Open WebUI → compat:12001 → MinerU 4 API:12000 → GPU
-MinerU 自带 WebUI ──────────↗
+Open WebUI
+    │ POST /file_parse (synchronous file upload)
+    ▼
+Compatibility bridge (CPU only, no models)
+    │ V1 upload → parse job → poll → download Markdown
+    ▼
+Existing MinerU 4 API → inference models / GPU
 ```
 
-## 已验证版本
+No Open WebUI source changes or additional model instances are needed. **An existing, working MinerU 4 API is required.** This repository does not install or start inference models and does not implement the entire MinerU 3 API. The compatibility finding applies to the inspected Open WebUI v0.11.1 integration; a future client with native MinerU 4 V1 support can connect directly without this bridge.
 
-- Open WebUI **v0.11.1 官方 MinerULoader** → MinerU **4.0.4**。
-- 16 项协议测试；PDF/HTML 经过断网 Flash 端到端解析。
-- 尚未验证所有 Open WebUI/MinerU 版本，也不等同于完整浏览器入库和 GPU Standard 推理验收。详见 [验证记录](VALIDATION.md)。
+## Tested compatibility
 
-## 快速部署
+- Official Open WebUI **v0.11.1 MinerULoader** → MinerU **4.0.4**.
+- 16 protocol tests and offline, end-to-end Flash parsing of PDF and HTML documents.
+- This does not certify every Open WebUI/MinerU release, the complete browser-to-knowledge-base flow, or GPU Standard inference. See the [validation record (Chinese)](VALIDATION.md).
+
+## Quick start
 
 ```bash
 git clone https://github.com/AtongWang/mineru-openwebui-compat.git
 cd mineru-openwebui-compat
 cp .env.example .env
-# 编辑 .env，填写已有 MinerU 4 API 地址。
+# Edit .env to point to your existing MinerU 4 API.
 docker compose build
 docker compose up -d --no-build
 docker compose logs -f
 ```
 
-默认连接同一宿主机发布在 12000 端口上的 MinerU，例如其端口映射为 `12000:8000`。Docker 的 host-gateway 指向宿主机；若上游仅监听 127.0.0.1，容器无法通过该网关访问，请配置容器可达地址。若两个服务共享 Docker 网络，可改用 `http://mineru-api:8000`，并将本服务加入该网络。不同 Compose 网络不会自动互通。
+By default, the bridge connects to MinerU on the Docker host at port `12000`, for example when MinerU publishes `12000:8000`. Docker's `host-gateway` points to the host; an upstream listening only on `127.0.0.1` is not reachable through that gateway. Configure an address reachable from the bridge container.
 
-本服务发布在 12001 端口。只需要 Docker Compose，不需要为兼容容器分配 GPU。MinerU 原生 WebUI 继续直接连接 MinerU API。
+If both containers share a Docker network, use `http://mineru-api:8000` and attach the bridge to that network. Separate Compose projects do not automatically share a network.
 
-## Open WebUI 设置
+The bridge publishes port `12001`. It needs Docker Compose but no GPU allocation. MinerU's own WebUI can continue connecting directly to the native MinerU API.
 
-管理员设置 → 文档/内容提取：
+## Configure Open WebUI
 
-| 配置 | 值 |
+In the admin settings for documents/content extraction:
+
+| Setting | Value |
 | --- | --- |
-| 提取引擎 | MinerU |
-| API 模式 | Local |
-| API URL | `http://服务器IP:12001` |
-| 超时 | `1860` 秒 |
-| 参数 | `{"tier":"standard"}` |
+| Extraction engine | MinerU |
+| API mode | Local |
+| API URL | `http://SERVER_IP:12001` |
+| Timeout | `1860` seconds |
+| Parameters | `{"tier":"standard"}` |
 
-清除原来的 `backend`、`model_version` 参数；URL 不要追加 `/v1` 或 `/file_parse`。初次验收使用 PDF。容器里的 localhost 指容器自身，应填写 Open WebUI 容器可达的服务器地址。已有部署请在管理界面保存配置，数据库设置可能优先于环境变量。
+Remove old `backend` and `model_version` parameters. Do not append `/v1` or `/file_parse` to the API URL. Start with a PDF to verify the integration.
 
-新 Open WebUI 部署可参考以下环境变量：
+Inside a container, `localhost` refers to that container. Use a server address reachable from Open WebUI. For existing deployments, save these settings in the admin interface: stored database settings may take precedence over environment variables.
+
+Environment variables for a new Open WebUI deployment:
 
 ```yaml
 CONTENT_EXTRACTION_ENGINE: mineru
 MINERU_API_MODE: local
-MINERU_API_URL: http://服务器IP:12001
+MINERU_API_URL: http://SERVER_IP:12001
 MINERU_API_TIMEOUT: "1860"
 MINERU_PARAMS: '{"tier":"standard"}'
 ```
 
-## 检查
+## Verify the connection
 
 ```bash
 curl -f http://localhost:12001/health
@@ -63,29 +78,28 @@ curl -f http://localhost:12001/file_parse \
   -F 'files=@document.pdf' -F 'return_md=true' -F 'tier=standard'
 ```
 
-成功返回 `results.<文件名>.md_content`。随后在 Open WebUI 上传真实 PDF，检查提取文本及知识库检索。health 检查验证上游可达，不代表模型推理已通过。
+A successful response contains `results.<filename>.md_content`. Next, upload a real PDF in Open WebUI and check the extracted text and knowledge-base retrieval. The health endpoint checks upstream availability, not successful model inference.
 
-## 参数与边界
+## Parameters and limitations
 
+- `tier`: `flash`, `basic`, `standard`, or `advanced`; defaults to `standard`. The upstream server must support the selected tier.
+- `parse_method`: `auto`, `txt`, or `ocr`; `enable_ocr=true` forces OCR.
+- `start_page_id` / `end_page_id`: converts legacy zero-based, inclusive page indices to V1 one-based ranges. An omitted end index or `99999` means the last page.
+- Direct bridge requests support `page_ranges`. Open WebUI v0.11.1's Local loader removes that parameter itself; use `start_page_id` / `end_page_id` in Open WebUI instead.
+- `return_md=true`; formula/table switches accept only `true`, because the V1 request does not expose corresponding disable options.
+- `language` / `lang_list`: V1 has no corresponding request field. The bridge logs a warning and uses automatic language detection.
+- `backend`, `model_version`, and unknown options return HTTP 422 rather than silently mapping old backends to new tiers.
+- Single-file Markdown only. Extracted images are not registered as Open WebUI image attachments. Legacy ZIP, JSON, and batch interfaces are not implemented.
+- Defaults: 200 MiB per upload and 16 MiB of Markdown. Configure `MAX_UPLOAD_BYTES` / `MAX_MARKDOWN_BYTES` to change these limits. Upload size is checked after multipart reception, with files spooled by the framework; an ingress proxy can enforce an earlier request-body limit.
+- Failed, partial, or canceled jobs return HTTP 502. Timeouts return HTTP 504 and trigger a best-effort cancellation of an unfinished job. A browser disconnect does not guarantee immediate upstream cancellation.
+- Same-origin, self-hosted uploads only; cloud presigned uploads and cross-origin download redirects are not supported.
+- The bridge does not persist a job index. Upstream files follow MinerU's retention behavior. In-flight requests are not guaranteed to survive restarts, and POST requests are not automatically retried to avoid duplicate inference.
+- Set the bridge's `MINERU_API_KEY` if the upstream requires authentication. The compatibility endpoint itself has no authentication: Open WebUI v0.11.1's Local loader does not send that key. Deploy on a trusted network; this is not a public authentication gateway.
+- If a reverse proxy is present, its timeout must also accommodate parsing time.
 
-- `tier`：flash/basic/standard/advanced，默认 standard；服务端需支持对应档位。
-- `parse_method`：auto/txt/ocr；`enable_ocr=true` 强制 ocr。
-- `start_page_id/end_page_id`：旧式从 0 开始、包含末页，转为 V1 从 1 开始；未指定末页或末页为 99999 时到最后一页。
-- 直接调用兼容层支持 `page_ranges`；Open WebUI 0.11.1 Local loader 自身会移除该参数，需在其参数中使用 start/end_page_id。
-- `return_md=true`；公式/表格开关只接受 true，V1 未提供对应关闭选项。
-- `language/lang_list`：V1 无对应请求字段，记录警告并使用自动语言识别。
-- `backend/model_version` 及未知选项返回 422，避免旧后端名称产生错误映射。
-- 仅支持单文件 Markdown。不会把提取图片注册为 Open WebUI 图片附件，不提供旧 ZIP/JSON/批处理协议。
-- 默认文件上限 200 MiB、Markdown 上限 16 MiB；通过 MAX_UPLOAD_BYTES/MAX_MARKDOWN_BYTES 修改。上传大小检查发生在 multipart 接收后，文件由框架暂存磁盘；暴露到外部时可在入口代理限制请求体。
-- 失败/部分成功/取消返回 502，超时返回 504，并尝试取消已创建的未完成任务。浏览器断开不会保证立即取消服务端任务。
-- 仅支持同源自托管文件上传，不支持云端预签名上传或跨域下载跳转。
-- 兼容层不保存任务索引；上游文件按 MinerU 自身保留策略管理。进程重启不保证恢复在途请求，不自动重试 POST 避免重复推理。
-- 上游启用鉴权时，为兼容容器设置 MINERU_API_KEY。兼容入口本身不加鉴权（Open WebUI 0.11.1 Local loader 不发送该 Key），应部署在可信内网；这不是公网鉴权网关。
-- 反向代理如有配置，其超时也需覆盖解析时长。
+## Offline deployment
 
-## 离线迁移
-
-联网机器先构建镜像，再导出：
+Build and export on an internet-connected machine:
 
 ```bash
 docker compose build
@@ -95,19 +109,19 @@ cp compose.yaml .env.example offline/
 (cd offline && sha256sum mineru-compat-1.0.0.tar > SHA256SUMS)
 ```
 
-复制 `offline/` 到离线服务器，执行：
+Copy `offline/` to the offline server and run these commands inside it:
 
 ```bash
 sha256sum -c SHA256SUMS
 docker load -i mineru-compat-1.0.0.tar
 cp .env.example .env
-# 修改 .env 中的 MINERU_API_URL。
+# Set MINERU_API_URL in .env to the reachable upstream address.
 docker compose up -d --no-build --pull never
 ```
 
-依赖已装入镜像，离线端不运行 pip、不重新构建。单独迁移 MinerU 的含模型镜像，以及 Open WebUI 镜像和数据卷。本项目的 `docker save` 不包含它们，也不包含数据卷。
+All bridge dependencies are already in the image. The offline server does not run pip or rebuild it. Transfer the MinerU image with its models, the Open WebUI image, and any data volumes separately; this image export does not include them.
 
-## 开发与测试
+## Development and tests
 
 ```bash
 uv venv .venv
@@ -116,11 +130,11 @@ uv pip install --python .venv/bin/python -r requirements.lock pytest==8.4.2
 docker compose config --quiet
 ```
 
-依赖锁定在 `requirements.lock`，Python 基础镜像固定 digest。GitHub Actions 运行协议测试和 Compose 校验，不启动模型服务。
+Dependencies are pinned in `requirements.lock`, and the Python base image is pinned by digest. GitHub Actions runs protocol tests and Compose validation without starting model services.
 
-## 协议依据
+## Protocol references
 
 - [Open WebUI v0.11.1 MinerULoader](https://github.com/open-webui/open-webui/blob/v0.11.1/backend/open_webui/retrieval/loaders/mineru.py)
-- [MinerU V1 HTTP API 示例](https://github.com/opendatalab/MinerU/blob/master/scripts/http_api_example.sh)
+- [MinerU V1 HTTP API example](https://github.com/opendatalab/MinerU/blob/master/scripts/http_api_example.sh)
 
-独立兼容项目，非 MinerU 或 Open WebUI 官方组件。
+This is an independent compatibility project, not an official MinerU or Open WebUI component.
